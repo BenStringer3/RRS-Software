@@ -12,9 +12,10 @@
 #define DEBUG_FLIGHTMODE	true
 
 //constants
-#define TOO_FAST			(-8.270)	//the descent speed (m/s) at which the RRS will deploy its chute
-#define BUFF_N				35			//the number of past vehicle states kept in memory for the calculation of velocity
-#define SAFETY_THRESHOLD	6			//the altitude, below which, the backup chute will not deploy
+#define PAYLOAD_MASS_LBM	8										//the weight of the payload (pounds!)
+#define TOO_FAST_MPS		(0.3048*(-sqrt(2*75/PAYLOAD_MASS_LBM)))	//the descent speed at which the RRS will deploy its chute (m/s)
+#define BUFF_N				15										//the number of past vehicle states kept in memory for the calculation of velocity (unitless)
+#define SAFETY_THRESHOLD_M	6										//the altitude, below which, the backup chute will not deploy (meters!)
 
 //pins
 #define BACKUP_CHUTE_PIN	A14
@@ -70,6 +71,8 @@ void setup()
 	//begin a new data file on the SD card, set the launch pad altitude, and  enter flight mode
 	newFlight();
 	setPadAlt();
+	Serial.printf("The vertical velocity at which the RRS will deploy the backup chute is %.3f m/s or %.3f ft/s\n", TOO_FAST_MPS, TOO_FAST_MPS*3.28084);
+	delay(3000);
 	flightMode();
 }
 
@@ -112,25 +115,29 @@ Author: Daniel and Ben
 */
 /**************************************************************************/
 void flightMode() {
-	bool ignited = false, rsoPermission = false, mrsHazard = false;
-	struct stateStruct vehicleState;
-	while (Serial.available() == 0) {
+	bool ignited = false;									//a boolean used to keep track of whether or not the RRS has fired its backup chute
+	struct stateStruct vehicleState;						//a stateStruct that stores the current state of the vehicle
+	unsigned long timer = 0;								//a temporary variable used to benchmark functions
+	while (Serial.available() == 0) {						//while we haven't hit any keys on the serial monitor
 		//get vehicle's current state
-		vehicleState.time = micros();
+		vehicleState.time = micros();	
 		vehicleState.alt = altitude_plz() - padAlt;
 		vehicleState.vel = calculateVelocity(vehicleState);
 
-		rsoPermission = digitalRead(RSO_PERMISSION_PIN);
+		//rsoPermission = digitalRead(RSO_PERMISSION_PIN);
 
-		if (rsoPermission && (vehicleState.alt > SAFETY_THRESHOLD) &&  ((vehicleState.vel <= TOO_FAST))) {
+		if ((vehicleState.alt > SAFETY_THRESHOLD_M) &&  ((vehicleState.vel <= TOO_FAST_MPS))) { //
 			digitalWrite(BACKUP_CHUTE_PIN, HIGH);
 			ignited = true;
 		}
-		logData(vehicleState.time, vehicleState.alt, vehicleState.vel, rsoPermission, ignited);
+		timer = micros();
+		logData(vehicleState.time, vehicleState.alt, vehicleState.vel, ignited);
+		Serial.printf("elapsed time: %lu\n", micros()-timer);
+
 #if DEBUG_FLIGHTMODE
 		Serial.println("");
 		Serial.println("FLIGHT MODE--------------");
-		Serial.printf("Time: %lu\nAltitude: %.3f\nVelocity: %.3f\nRSO Permission: %d\nIgnition: %d\n", vehicleState.time, vehicleState.alt, vehicleState.vel, rsoPermission, ignited);
+		Serial.printf("Time: %lu\nAltitude: %.3f\nVelocity: %.3f\nIgnition: %d\n", vehicleState.time, vehicleState.alt, vehicleState.vel, ignited);
 #endif
 	}
 }
@@ -142,10 +149,10 @@ void flightMode() {
 Author: Ben
 */
 /**************************************************************************/
-void logData(unsigned long myTime, float myAlt, float myVel, bool rsoPermis, bool deploy) {
+void logData(unsigned long myTime, float myAlt, float myVel, bool deploy) {
 	File myFile = sd.open(LOG_FILENAME, FILE_WRITE);
 	if (myFile) {
-		myFile.printf("%lu,%.3f,%.3f,%d,%d", myTime, myAlt, myVel, rsoPermis, deploy);
+		myFile.printf("%lu,%.3f,%.3f,%d", myTime, myAlt, myVel, deploy);
 		myFile.println("");
 		myFile.close();
 	}
@@ -233,7 +240,7 @@ float altitude_plz(void) {
   */
   /**************************************************************************/
 float calculateVelocity(struct stateStruct rawState) { //VARIABLES NEEDED FOR CALULATION
-	float sumTimes = 0, sumTimes2 = 0, sumAlt = 0, sumAltTimes = 0, leftSide = 0;
+	float sumTimes = 0, sumTimes2 = 0, sumAlt = 0, sumAltTimes = 0;
 	float numer = 0, denom = 0, velocity = 0, pastTime = 0, newTime = 0;
 
 	//shift new readings into arrays   
