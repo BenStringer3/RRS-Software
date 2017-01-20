@@ -9,13 +9,15 @@
 
 //debug options
 #define DEBUG_ALTITUDEPLZ	false
-#define DEBUG_FLIGHTMODE	true
+#define DEBUG_FLIGHTMODE	false
+#define DEBUG_VELOCITY		false
+#define DEBUG_EMERGENCY		false
 
 //constants
-#define PAYLOAD_MASS_LBM	8										//the weight of the payload (pounds!)
+#define PAYLOAD_MASS_LBM	9									//the weight of the payload (pounds!)
 #define TOO_FAST_MPS		(0.3048*(-sqrt(2*75/PAYLOAD_MASS_LBM)))	//the descent speed at which the RRS will deploy its chute (m/s)
-#define BUFF_N				15										//the number of past vehicle states kept in memory for the calculation of velocity (unitless)
-#define SAFETY_THRESHOLD_M	6										//the altitude, below which, the backup chute will not deploy (meters!)
+#define BUFF_N				32									//the number of past vehicle states kept in memory for the calculation of velocity (unitless)
+#define SAFETY_THRESHOLD_M	0										//the altitude, below which, the backup chute will not deploy (meters!)
 
 //pins
 #define BACKUP_CHUTE_PIN	A14
@@ -27,18 +29,19 @@ struct stateStruct {
 	float vel;                                                    //The most recent velocity derived from calculateVelocity() function     (m/s)
 	unsigned long time;                                           //Time since the program began                                           (us)
 	float buff_t;                                                 //The time relative to the present moment. (used in calculateVelocity()) (s)
-};
+} ;                       //Stores past BUFF_N state structures
 
 //begin global variables----------------------------
 //SD card object
 SdFatSdio sd;   
+File data;
 
 //bmp180 card object
 Adafruit_BMP085_Unified bmp = Adafruit_BMP085_Unified(10085);   //stores BMP180 object
 
 char response;
 float padAlt = 0;
-stateStruct pastRawStates[BUFF_N];                       //Stores past BUFF_N state structures
+
 //end global variables------------------------------
 
 void setup()
@@ -117,7 +120,6 @@ Author: Daniel and Ben
 void flightMode() {
 	bool ignited = false;									//a boolean used to keep track of whether or not the RRS has fired its backup chute
 	struct stateStruct vehicleState;						//a stateStruct that stores the current state of the vehicle
-	unsigned long timer = 0;								//a temporary variable used to benchmark functions
 	while (Serial.available() == 0) {						//while we haven't hit any keys on the serial monitor
 		//get vehicle's current state
 		vehicleState.time = micros();	
@@ -130,9 +132,7 @@ void flightMode() {
 			digitalWrite(BACKUP_CHUTE_PIN, HIGH);
 			ignited = true;
 		}
-		timer = micros();
 		logData(vehicleState.time, vehicleState.alt, vehicleState.vel, ignited);
-		Serial.printf("elapsed time: %lu\n", micros()-timer);
 
 #if DEBUG_FLIGHTMODE
 		Serial.println("");
@@ -178,11 +178,11 @@ void newFlight(void) {
 		data.close();                                               //Closes data file after use.
 	}
 	//initialize past raw states
-	for (unsigned int i = 0; i<BUFF_N; i++) {
-		pastRawStates[i].alt = (float)(0);
-		pastRawStates[i].vel = (float)(0);
-		pastRawStates[i].time = (unsigned long)(0);
-	}
+	//for (unsigned int i = 0; i<BUFF_N; i++) {
+	//	pastRawStates[i].alt = (float)(0);
+	//	pastRawStates[i].vel = (float)(0);
+	//	pastRawStates[i].time = (unsigned long)(0);
+	//}
 } // END newFlight()
 
 
@@ -242,6 +242,7 @@ float altitude_plz(void) {
 float calculateVelocity(struct stateStruct rawState) { //VARIABLES NEEDED FOR CALULATION
 	float sumTimes = 0, sumTimes2 = 0, sumAlt = 0, sumAltTimes = 0;
 	float numer = 0, denom = 0, velocity = 0, pastTime = 0, newTime = 0;
+	static stateStruct pastRawStates[BUFF_N];
 
 	//shift new readings into arrays   
 	for (int i = BUFF_N; i > 0; i--) {
@@ -260,7 +261,7 @@ float calculateVelocity(struct stateStruct rawState) { //VARIABLES NEEDED FOR CA
 #if DEBUG_VELOCITY && DEBUG_EMERGENCY
 	Serial.println("");
 	Serial.println("Past states post-shift");
-	GUI.printPastStates(pastRawStates);                             //If in DEBUG_VELOCITY and DEBUG_EMERGENCY, print all pastRawStates for verification of function output
+	printPastStates(pastRawStates);                             //If in DEBUG_VELOCITY and DEBUG_EMERGENCY, print all pastRawStates for verification of function output
 #endif
 
 																	//FIND SUMS FOR BMP
@@ -280,16 +281,13 @@ float calculateVelocity(struct stateStruct rawState) { //VARIABLES NEEDED FOR CA
 	Serial.println();
 	Serial.println("VELOCITY--------------------;");
 	Serial.print("leftSide: ");
-	Serial.print(leftSide, 3);
+	Serial.print(velocity, 3);
 	Serial.println(";");
 	Serial.print("numer: ");
 	Serial.print(numer, 3);
 	Serial.println(";");
 	Serial.print("denom: ");
 	Serial.print(denom, 3);
-	Serial.println(";");
-	Serial.print("rightSide: ");
-	Serial.print(rightSide, 6);
 	Serial.println(";");
 	Serial.print("sumTimes: ");
 	Serial.print(sumTimes, 3);
@@ -302,10 +300,6 @@ float calculateVelocity(struct stateStruct rawState) { //VARIABLES NEEDED FOR CA
 	Serial.println(";");
 	Serial.print("sumAltTimes: ");
 	Serial.print(sumAltTimes, 3);
-	Serial.println(";");
-	Serial.print("Velocity ");
-	Serial.print(rightSide + leftSide, 3);
-	Serial.println(";");
 #endif
 	return velocity;
 }// END calculateVelocity()
@@ -358,3 +352,52 @@ void printMenu() {
 	Serial.println("\n\n--------- Menu -----------;");
 	Serial.println("'F' - (F)light Mode;");
 }
+
+
+/**************************************************************************/
+/*!
+@brief  prints the state struct
+Author: Ben
+*/
+/**************************************************************************/
+void printState(struct stateStruct state, String label) {
+	Serial.println(label);
+	Serial.print("alt =   ");
+	Serial.println(state.alt, 3);
+	Serial.print("vel =   ");
+	Serial.println(state.vel, 4);
+	Serial.print("t =     ");
+	Serial.println(state.time, 6);
+} // END printState()
+
+  /**************************************************************************/
+  /*!
+  @brief  Prints all pastRawState values.
+  Author: Jacob
+  */
+  /**************************************************************************/
+void printPastStates(struct stateStruct* pastStates) {
+	Serial.println("");
+	for (int i = 0; i < BUFF_N; i++) {
+		printState(pastStates[i], i);
+	}
+} // END printPastStates()
+
+  /**************************************************************************/
+  /*!
+  @brief  Prints one state and it's location in the pastRawStates array
+  Author: Jacob
+  */
+  /**************************************************************************/
+void printState(struct stateStruct state, int label) {
+	Serial.print(label);
+	Serial.print(") alt = ");
+	Serial.print(state.alt, 4);
+	Serial.print(", vel = ");
+	Serial.print(state.vel, 4);
+	Serial.print(", time = ");
+	Serial.print(state.time);
+	Serial.print(", buff_t = ");
+	Serial.print(state.buff_t, 4);
+	Serial.println(");");
+} //End printState()
